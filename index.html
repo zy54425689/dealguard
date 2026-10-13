@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DealGuard — On-chain Dispute Arbitration on GenLayer</title>
+<meta name="description" content="DealGuard: an Intelligent Contract on GenLayer that adjudicates agentic-commerce disputes by reading evidence URLs with an LLM jury." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{--bg:#0b0e1a;--card:#151a2e;--line:#262d4a;--acc:#7c5cff;--ok:#2ecc71;--err:#e74c3c;--txt:#e8eaf6;--mut:#9aa3c2}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Space Grotesk',system-ui,sans-serif;background:radial-gradient(1200px 600px at 80% -10%,#241a4d 0%,var(--bg) 55%);color:var(--txt);min-height:100vh;padding:32px 16px}
+  .wrap{max-width:1000px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px}
+  h1{font-size:28px}h1 span{color:var(--acc)}
+  .sub{color:var(--mut);font-size:14px;margin-bottom:22px}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--txt);padding:10px 18px;border-radius:10px;font-size:14px;transition:.15s}
+  button:hover{border-color:var(--acc)}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:780px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .card h2{font-size:14px;margin-bottom:14px;color:var(--mut);font-weight:500;letter-spacing:.6px}
+  label{display:block;font-size:12px;color:var(--mut);margin:12px 0 6px}
+  input,textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px}
+  textarea{min-height:64px;resize:vertical}
+  .row{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  .msg{margin-top:12px;font-size:13px;padding:10px 12px;border-radius:8px;display:none}
+  .msg.show{display:block}
+  .msg.ok{background:rgba(46,204,113,.12);color:var(--ok);border:1px solid rgba(46,204,113,.35)}
+  .msg.err{background:rgba(231,76,60,.12);color:var(--err);border:1px solid rgba(231,76,60,.35)}
+  .msg.info{background:rgba(124,92,255,.12);color:var(--acc);border:1px solid rgba(124,92,255,.35)}
+  pre.state{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px;font-size:12.5px;overflow:auto;white-space:pre-wrap;min-height:120px;font-family:ui-monospace,Menlo,monospace}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--mut);display:inline-block;margin-right:6px}
+  .dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .pill{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--bg);border:1px solid var(--line);color:var(--mut)}
+  .links{margin-top:22px;font-size:12px;color:var(--mut);text-align:center;line-height:1.9}
+  .links a{color:var(--acc);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Deal<span>Guard</span></h1>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span class="pill"><span class="dot" id="netDot"></span><span id="netLabel">read-only mode</span></span>
+      <button id="connectBtn" class="primary">Connect wallet</button>
+    </div>
+  </header>
+  <p class="sub">On-chain dispute arbitration for agentic commerce — an Intelligent Contract that reads evidence URLs and lets an LLM jury decide who gets the escrowed funds.</p>
+
+  <div class="card" style="margin-bottom:18px;">
+    <h2>LIVE CONTRACT · GENLAYER BRADBURY TESTNET</h2>
+    <div class="row" style="margin-top:0;">
+      <input id="disputeId" type="number" min="1" value="1" style="max-width:120px;" />
+      <button id="loadBtn">Load dispute</button>
+      <button id="countBtn">Dispute count</button>
+      <span class="pill" id="addrPill">0x9adf…0039</span>
+    </div>
+    <div class="msg" id="readMsg"></div>
+    <div style="margin-top:14px;">
+      <pre class="state" id="stateBox">Click "Load dispute" to read dispute #1 straight from the chain (no wallet needed).</pre>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>OPEN A DISPUTE</h2>
+      <label>Seller address</label>
+      <input id="seller" placeholder="0x…" />
+      <label>Escrowed amount (GEN)</label>
+      <input id="amount" type="number" min="1" placeholder="100" />
+      <label>Dispute description</label>
+      <textarea id="desc" placeholder="e.g. Agent B was supposed to deliver a dataset but the schema does not match the agreed spec."></textarea>
+      <div class="row"><button class="primary" id="createBtn">Create dispute</button></div>
+      <div class="msg" id="createMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>SUBMIT EVIDENCE</h2>
+      <label>Dispute ID</label>
+      <input id="evId" type="number" min="1" value="1" />
+      <label>Evidence URL</label>
+      <input id="evUrl" placeholder="https://…" />
+      <label>What does this prove?</label>
+      <textarea id="evDesc" placeholder="e.g. Payment receipt showing the transfer"></textarea>
+      <div class="row"><button class="primary" id="evBtn">Submit evidence</button></div>
+      <div class="msg" id="evMsg"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px;">
+    <h2>REQUEST THE AI RULING</h2>
+    <div class="row" style="margin-top:0;">
+      <input id="ruleId" type="number" min="1" value="1" style="max-width:120px;" />
+      <button class="primary" id="ruleBtn">Ask the LLM jury</button>
+      <button id="settleBtn">Settle (release escrow)</button>
+    </div>
+    <div class="msg" id="ruleMsg"></div>
+  </div>
+
+  <div class="links">
+    Contract <a id="expLink" href="https://explorer-bradbury.genlayer.com/address/0x9adf2dcc59401cb7122b25cbd5741931B2D20039" target="_blank" rel="noopener">0x9adf2dcc59401cb7122b25cbd5741931B2D20039</a> · GenLayer Bradbury ·
+    <a href="https://github.com/zy54425689/dealguard" target="_blank" rel="noopener">source</a>
+  </div>
+</div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/genlayer-js@1.1.8";
+import { testnetBradbury } from "https://esm.sh/genlayer-js@1.1.8/chains";
+
+const ADDR = "0x9adf2dcc59401cb7122b25cbd5741931B2D20039";
+const STATE_NAMES = ["CREATED", "EVIDENCE", "RULED", "SETTLED"];
+const $ = (id) => document.getElementById(id);
+
+// Read-only client works without any wallet.
+const readClient = createClient({ chain: testnetBradbury });
+let writeClient = null;
+let account = null;
+
+function msg(el, text, kind = "info") {
+  el.className = "msg show " + kind;
+  el.textContent = text;
+}
+
+function render(d) {
+  const fmt = (arr) => (arr || []).map((e) => `  • ${e.url}\n    └ ${e.description}`).join("\n") || "  (none)";
+  $("stateBox").textContent =
+    `Dispute #${d.id}   [${STATE_NAMES[Number(d.state)] ?? d.state}]\n` +
+    `buyer : 0x${d.buyer}\n` +
+    `seller: 0x${d.seller}\n` +
+    `escrow: ${d.amount} GEN\n` +
+    `desc  : ${d.description}\n` +
+    `\nbuyer evidence:\n${fmt(d.buyer_evidence)}\n` +
+    `\nseller evidence:\n${fmt(d.seller_evidence)}\n` +
+    (d.winner ? `\nVERDICT: winner = ${d.winner}\nreason: ${d.ruling_reason}` : "");
+}
+
+$("loadBtn").addEventListener("click", async () => {
+  const id = $("disputeId").value || 1;
+  try {
+    msg($("readMsg"), "Reading from chain…", "info");
+    const d = await readClient.readContract({ address: ADDR, functionName: "get_dispute", args: [BigInt(id)] });
+    render(d);
+    msg($("readMsg"), "Loaded.", "ok");
+  } catch (e) {
+    msg($("readMsg"), "Read failed: " + (e.message || e).toString().slice(0, 160), "err");
+  }
+});
+
+$("countBtn").addEventListener("click", async () => {
+  try {
+    const n = await readClient.readContract({ address: ADDR, functionName: "get_dispute_count", args: [] });
+    msg($("readMsg"), `Total disputes on-chain: ${n}`, "ok");
+  } catch (e) {
+    msg($("readMsg"), "Failed: " + (e.message || e).toString().slice(0, 160), "err");
+  }
+});
+
+$("connectBtn").addEventListener("click", async () => {
+  if (!window.ethereum) return msg($("readMsg"), "No wallet found — install MetaMask to send transactions.", "err");
+  try {
+    const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    account = accts[0];
+    // Switch to GenLayer Bradbury (chainId 4221 / 0x107d)
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x107d" }] });
+    } catch (_) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{
+          chainId: "0x107d",
+          chainName: "GenLayer Bradbury Testnet",
+          nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+          rpcUrls: ["https://rpc-bradbury.genlayer.com"],
+          blockExplorerUrls: ["https://explorer-bradbury.genlayer.com"],
+        }],
+      });
+    }
+    writeClient = createClient({ chain: testnetBradbury, account: window.ethereum });
+    $("netLabel").textContent = account.slice(0, 6) + "…" + account.slice(-4);
+    $("netDot").classList.add("live");
+    $("connectBtn").textContent = "Connected";
+    msg($("readMsg"), "Wallet connected. You can now send transactions.", "ok");
+  } catch (e) {
+    msg($("readMsg"), "Connect failed: " + e.message, "err");
+  }
+});
+
+async function write(fn, args, el, label) {
+  if (!writeClient) { msg(el, "Connect your wallet first.", "err"); return; }
+  try {
+    msg(el, `${label}: submitting…`, "info");
+    const hash = await writeClient.writeContract({ address: ADDR, functionName: fn, args });
+    msg(el, `${label} sent: ${hash}`, "ok");
+  } catch (e) {
+    msg(el, `${label} failed: ` + (e.message || e).toString().slice(0, 200), "err");
+  }
+}
+
+$("createBtn").addEventListener("click", () => {
+  const s = $("seller").value.trim(), a = $("amount").value, d = $("desc").value.trim();
+  if (!s || !a || !d) return msg($("createMsg"), "Fill in seller, amount and description.", "err");
+  write("create_dispute", [s, BigInt(a), d], $("createMsg"), "create_dispute");
+});
+
+$("evBtn").addEventListener("click", () => {
+  const i = $("evId").value, u = $("evUrl").value.trim(), d = $("evDesc").value.trim();
+  if (!i || !u || !d) return msg($("evMsg"), "Fill in ID, URL and description.", "err");
+  write("submit_evidence", [BigInt(i), u, d], $("evMsg"), "submit_evidence");
+});
+
+$("ruleBtn").addEventListener("click", () =>
+  write("request_ruling", [BigInt($("ruleId").value || 1)], $("ruleMsg"), "request_ruling (LLM consensus)"));
+
+$("settleBtn").addEventListener("click", () =>
+  write("settle", [BigInt($("ruleId").value || 1)], $("ruleMsg"), "settle"));
+
+// Load dispute #1 on page open (read-only, no wallet needed)
+$("loadBtn").click();
+</script>
+</body>
+</html>
