@@ -3,223 +3,280 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>DealGuard — On-chain Dispute Arbitration on GenLayer</title>
-<meta name="description" content="DealGuard: an Intelligent Contract on GenLayer that adjudicates agentic-commerce disputes by reading evidence URLs with an LLM jury." />
+<title>DealGuard — Escrowed Dispute Arbitration on GenLayer</title>
+<meta name="description" content="DealGuard escrows real GEN and lets an LLM jury on GenLayer read the evidence and pay out the winner. Funded custody, seller opt-in, enforceable payouts." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
-  :root{--bg:#0b0e1a;--card:#151a2e;--line:#262d4a;--acc:#7c5cff;--ok:#2ecc71;--err:#e74c3c;--txt:#e8eaf6;--mut:#9aa3c2}
+  :root{
+    --bg:#0b0e1a; --card:#151a2e; --card2:#1a2140; --line:#262d4a; --line2:#37406b;
+    --acc:#7c5cff; --acc2:#a78bfa; --ok:#2ecc71; --warn:#f1c40f; --err:#e74c3c;
+    --txt:#e8eaf6; --mut:#9aa3c2; --faint:#6b7396;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Space Grotesk',system-ui,sans-serif;background:radial-gradient(1200px 600px at 80% -10%,#241a4d 0%,var(--bg) 55%);color:var(--txt);min-height:100vh;padding:32px 16px}
-  .wrap{max-width:1000px;margin:0 auto}
-  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px}
-  h1{font-size:28px}h1 span{color:var(--acc)}
-  .sub{color:var(--mut);font-size:14px;margin-bottom:22px}
-  button{font-family:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--txt);padding:10px 18px;border-radius:10px;font-size:14px;transition:.15s}
+  body{
+    font-family:'Space Grotesk',system-ui,sans-serif;
+    background:radial-gradient(1100px 560px at 82% -8%, #241a4d 0%, var(--bg) 58%);
+    color:var(--txt); min-height:100vh; padding:30px 16px 56px;
+  }
+  .wrap{max-width:1060px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  h1{font-size:26px}h1 span{color:var(--acc)}
+  .tag{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--faint);margin-top:3px}
+  .sub{color:var(--mut);font-size:14px;line-height:1.65;margin:14px 0 22px;max-width:760px}
+  .sub b{color:var(--acc2);font-weight:500}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--txt);
+         padding:10px 17px;border-radius:10px;font-size:13.5px;transition:.15s}
   button:hover{border-color:var(--acc)}
   button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-  @media(max-width:780px){.grid{grid-template-columns:1fr}}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
-  .card h2{font-size:14px;margin-bottom:14px;color:var(--mut);font-weight:500;letter-spacing:.6px}
-  label{display:block;font-size:12px;color:var(--mut);margin:12px 0 6px}
-  input,textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:14px}
-  textarea{min-height:64px;resize:vertical}
-  .row{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
-  .msg{margin-top:12px;font-size:13px;padding:10px 12px;border-radius:8px;display:none}
+  button.escrow{background:linear-gradient(140deg,var(--acc),#5b3fd6);border:none;color:#fff;font-weight:500}
+  button:disabled{opacity:.42;cursor:not-allowed}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:17px}
+  @media(max-width:800px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:19px}
+  .card h2{font-size:12.5px;margin-bottom:13px;color:var(--mut);font-weight:500;letter-spacing:.7px;
+           font-family:'JetBrains Mono',monospace}
+  label{display:block;font-size:11.5px;color:var(--mut);margin:11px 0 5px}
+  input,textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--txt);
+                 border-radius:8px;padding:10px 12px;font-family:inherit;font-size:13.5px}
+  input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+  textarea{min-height:62px;resize:vertical}
+  .row{display:flex;gap:9px;align-items:center;margin-top:15px;flex-wrap:wrap}
+  .msg{margin-top:11px;font-size:12.5px;padding:10px 12px;border-radius:8px;display:none;word-break:break-all;
+       font-family:'JetBrains Mono',monospace;line-height:1.5}
   .msg.show{display:block}
   .msg.ok{background:rgba(46,204,113,.12);color:var(--ok);border:1px solid rgba(46,204,113,.35)}
-  .msg.err{background:rgba(231,76,60,.12);color:var(--err);border:1px solid rgba(231,76,60,.35)}
-  .msg.info{background:rgba(124,92,255,.12);color:var(--acc);border:1px solid rgba(124,92,255,.35)}
-  pre.state{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px;font-size:12.5px;overflow:auto;white-space:pre-wrap;min-height:120px;font-family:ui-monospace,Menlo,monospace}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--mut);display:inline-block;margin-right:6px}
-  .dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .pill{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--bg);border:1px solid var(--line);color:var(--mut)}
-  .links{margin-top:22px;font-size:12px;color:var(--mut);text-align:center;line-height:1.9}
-  .links a{color:var(--acc);text-decoration:none}
+  .msg.err{background:rgba(231,76,60,.12);color:#f07a6a;border:1px solid rgba(231,76,60,.35)}
+  .msg.info{background:rgba(124,92,255,.12);color:var(--acc2);border:1px solid rgba(124,92,255,.35)}
+  pre.state{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px;font-size:12.5px;
+            overflow:auto;white-space:pre-wrap;min-height:150px;font-family:'JetBrains Mono',monospace;line-height:1.55}
+  .pill{font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 10px;border-radius:999px;
+        background:var(--bg);border:1px solid var(--line);color:var(--mut)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);display:inline-block;margin-right:6px}
+  .dot.on{background:var(--ok);box-shadow:0 0 9px var(--ok)}
+  .vault{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px;margin-bottom:18px}
+  @media(max-width:700px){.vault{grid-template-columns:1fr}}
+  .v{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .v .k{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--faint);letter-spacing:.5px}
+  .v .n{font-size:19px;font-weight:600;margin-top:5px}
+  .v .n.purple{color:var(--acc2)}
+  .v .n.green{color:var(--ok)}
+  .badge{font-family:'JetBrains Mono',monospace;font-size:10.5px;padding:3px 9px;border-radius:6px}
+  .b0{background:rgba(241,196,15,.14);color:var(--warn);border:1px solid rgba(241,196,15,.4)}
+  .b1{background:rgba(124,92,255,.15);color:var(--acc2);border:1px solid rgba(124,92,255,.4)}
+  .b2{background:rgba(46,204,113,.14);color:var(--ok);border:1px solid rgba(46,204,113,.4)}
+  .b3{background:rgba(154,163,194,.15);color:var(--mut);border:1px solid var(--line)}
+  .b4{background:rgba(231,76,60,.14);color:#f07a6a;border:1px solid rgba(231,76,60,.35)}
+  footer{margin-top:30px;padding-top:16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--faint);
+         text-align:center;line-height:2;font-family:'JetBrains Mono',monospace}
+  footer a{color:var(--mut);text-decoration:none}footer a:hover{color:var(--acc2)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Deal<span>Guard</span></h1>
-    <div style="display:flex;gap:10px;align-items:center;">
-      <span class="pill"><span class="dot" id="netDot"></span><span id="netLabel">read-only mode</span></span>
-      <button id="connectBtn" class="primary">Connect wallet</button>
+    <div>
+      <h1>Deal<span>Guard</span></h1>
+      <div class="tag">escrowed arbitration · GenLayer Bradbury · chain 4221</div>
+    </div>
+    <div style="display:flex;gap:9px;align-items:center;">
+      <span class="pill"><span class="dot" id="netDot"></span><span id="netLabel">read-only</span></span>
+      <button class="primary" id="connectBtn">Connect wallet</button>
     </div>
   </header>
-  <p class="sub">On-chain dispute arbitration for agentic commerce — an Intelligent Contract that reads evidence URLs and lets an LLM jury decide who gets the escrowed funds.</p>
 
-  <div class="card" style="margin-bottom:18px;">
-    <h2>LIVE CONTRACT · GENLAYER BRADBURY TESTNET</h2>
+  <p class="sub">
+    Funds are <b>really escrowed</b> by the contract and <b>really paid out</b> to the winner.
+    The buyer escrows GEN on creation, the named seller opts in, both sides file evidence URLs,
+    and an LLM jury reads those pages on-chain to rule how the escrow is released.
+  </p>
+
+  <div class="vault">
+    <div class="v"><div class="k">ESCROW HELD BY CONTRACT</div><div class="n purple" id="vHeld">–</div></div>
+    <div class="v"><div class="k">DISPUTES</div><div class="n" id="vCount">–</div></div>
+    <div class="v"><div class="k">STATE</div><div class="n green" id="vState">–</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:17px;">
+    <h2>DISPUTE VIEWER</h2>
     <div class="row" style="margin-top:0;">
-      <input id="disputeId" type="number" min="1" value="1" style="max-width:120px;" />
+      <input id="dId" type="number" min="1" value="1" style="max-width:110px" />
       <button id="loadBtn">Load dispute</button>
-      <button id="countBtn">Dispute count</button>
-      <span class="pill" id="addrPill">0x9adf…0039</span>
+      <button id="countBtn">Count</button>
+      <span class="pill" id="addrPill">—</span>
     </div>
     <div class="msg" id="readMsg"></div>
-    <div style="margin-top:14px;">
-      <pre class="state" id="stateBox">Click "Load dispute" to read dispute #1 straight from the chain (no wallet needed).</pre>
-    </div>
+    <pre class="state" id="stateBox">Connect a wallet and load a dispute, or press "Load dispute" to read it read-only.</pre>
   </div>
 
   <div class="grid">
     <div class="card">
-      <h2>OPEN A DISPUTE</h2>
-      <label>Seller address</label>
+      <h2>1 · OPEN DISPUTE (ESCROW GEN)</h2>
+      <label>Seller address (must accept before evidence)</label>
       <input id="seller" placeholder="0x…" />
-      <label>Escrowed amount (GEN)</label>
-      <input id="amount" type="number" min="1" placeholder="100" />
+      <label>Escrow amount (GEN) — sent with this call, held by the contract</label>
+      <input id="escrow" type="number" min="0" step="0.01" placeholder="0.5" />
       <label>Dispute description</label>
-      <textarea id="desc" placeholder="e.g. Agent B was supposed to deliver a dataset but the schema does not match the agreed spec."></textarea>
-      <div class="row"><button class="primary" id="createBtn">Create dispute</button></div>
+      <textarea id="desc" placeholder="e.g. 0.5 GEN escrowed for a dataset delivery; the file delivered was corrupt."></textarea>
+      <div class="row"><button class="escrow" id="createBtn">Escrow &amp; open dispute</button></div>
       <div class="msg" id="createMsg"></div>
     </div>
 
     <div class="card">
-      <h2>SUBMIT EVIDENCE</h2>
+      <h2>2 · ACTIONS</h2>
       <label>Dispute ID</label>
-      <input id="evId" type="number" min="1" value="1" />
-      <label>Evidence URL</label>
+      <input id="aId" type="number" min="1" value="1" />
+      <div class="row">
+        <button id="acceptBtn">Accept (seller)</button>
+        <button id="refundBtn">Refund (buyer, unaccepted)</button>
+      </div>
+      <label>Evidence URL (buyer or seller)</label>
       <input id="evUrl" placeholder="https://…" />
-      <label>What does this prove?</label>
-      <textarea id="evDesc" placeholder="e.g. Payment receipt showing the transfer"></textarea>
-      <div class="row"><button class="primary" id="evBtn">Submit evidence</button></div>
-      <div class="msg" id="evMsg"></div>
+      <label>What does it prove?</label>
+      <textarea id="evDesc" placeholder="e.g. Payment receipt showing the 0.5 GEN transfer"></textarea>
+      <div class="row">
+        <button class="primary" id="evBtn">Submit evidence</button>
+        <button id="judgeBtn">Ask the LLM jury</button>
+        <button class="escrow" id="settleBtn">Settle (pay out)</button>
+      </div>
+      <div class="msg" id="actMsg"></div>
     </div>
   </div>
 
-  <div class="card" style="margin-top:18px;">
-    <h2>REQUEST THE AI RULING</h2>
-    <div class="row" style="margin-top:0;">
-      <input id="ruleId" type="number" min="1" value="1" style="max-width:120px;" />
-      <button class="primary" id="ruleBtn">Ask the LLM jury</button>
-      <button id="settleBtn">Settle (release escrow)</button>
-    </div>
-    <div class="msg" id="ruleMsg"></div>
-  </div>
-
-  <div class="links">
-    Contract <a id="expLink" href="https://explorer-bradbury.genlayer.com/address/0x9adf2dcc59401cb7122b25cbd5741931B2D20039" target="_blank" rel="noopener">0x9adf2dcc59401cb7122b25cbd5741931B2D20039</a> · GenLayer Bradbury ·
-    <a href="https://github.com/zy54425689/dealguard" target="_blank" rel="noopener">source</a>
-  </div>
+  <footer>
+    <div id="footLinks"></div>
+    DealGuard · escrowed custody + LLM adjudication · Intelligent Contract on GenLayer
+  </footer>
 </div>
 
 <script type="module">
 import { createClient } from "https://esm.sh/genlayer-js@1.1.8";
 import { testnetBradbury } from "https://esm.sh/genlayer-js@1.1.8/chains";
 
-const ADDR = "0x9adf2dcc59401cb7122b25cbd5741931B2D20039";
-const STATE_NAMES = ["CREATED", "EVIDENCE", "RULED", "SETTLED"];
-const $ = (id) => document.getElementById(id);
+// ---- CONFIG ------------------------------------------------------------
+const ADDR = "0xf0D8640BB6901bf5C6129661a24152fB0D20f6Fe";
+const REPO = "https://github.com/zy54425689/dealguard";
+const EXPLORER = "https://explorer-bradbury.genlayer.com/address/" + ADDR;
+// ------------------------------------------------------------------------
 
-// Read-only client works without any wallet.
+const STATES = ["AWAITING SELLER", "ACTIVE", "RULED", "SETTLED", "CANCELLED"];
+const $ = (id) => document.getElementById(id);
 const readClient = createClient({ chain: testnetBradbury });
 let writeClient = null;
-let account = null;
 
-function msg(el, text, kind = "info") {
-  el.className = "msg show " + kind;
-  el.textContent = text;
-}
+const eth = (wei) => (Number(wei) / 1e18).toFixed(6);
+const short = (a) => a && a.length > 16 ? a.slice(0, 8) + "…" + a.slice(-6) : a;
+function msg(el, t, k = "info") { el.className = "msg show " + k; el.textContent = t; }
+function badge(s) { const n = Number(s); return `<span class="badge b${n}">${STATES[n] ?? s}</span>`; }
 
 function render(d) {
-  const fmt = (arr) => (arr || []).map((e) => `  • ${e.url}\n    └ ${e.description}`).join("\n") || "  (none)";
+  $("addrPill").textContent = short("0x" + (d.buyer || "")) + " → " + short("0x" + (d.seller || ""));
+  $("vState").innerHTML = STATES[Number(d.state)] ?? d.state;
+  const fmtEv = (arr) => (arr || []).map((e) => `  • ${e.url}\n    └ ${e.description}`).join("\n") || "  (none)";
   $("stateBox").textContent =
-    `Dispute #${d.id}   [${STATE_NAMES[Number(d.state)] ?? d.state}]\n` +
-    `buyer : 0x${d.buyer}\n` +
-    `seller: 0x${d.seller}\n` +
-    `escrow: ${d.amount} GEN\n` +
-    `desc  : ${d.description}\n` +
-    `\nbuyer evidence:\n${fmt(d.buyer_evidence)}\n` +
-    `\nseller evidence:\n${fmt(d.seller_evidence)}\n` +
-    (d.winner ? `\nVERDICT: winner = ${d.winner}\nreason: ${d.ruling_reason}` : "");
+    `DISPUTE #${d.id}   [${STATES[Number(d.state)] ?? d.state}]\n` +
+    `buyer  : 0x${d.buyer}\n` +
+    `seller : 0x${d.seller}${d.seller_accepted ? "  (accepted)" : "  (NOT accepted yet)"}\n` +
+    `escrowed        : ${eth(d.escrowed)} GEN\n` +
+    `contract holds  : ${eth(d.escrow_held_now)} GEN\n` +
+    `description: ${d.description}\n\n` +
+    `BUYER evidence:\n${fmtEv(d.buyer_evidence)}\n\n` +
+    `SELLER evidence:\n${fmtEv(d.seller_evidence)}\n` +
+    (d.winner ? `\nRULING: winner = ${d.winner}${d.winner === "split" ? ` (${d.split_percent}% to buyer)` : ""}\nconfidence: ${d.ruling_confidence}\nreason: ${d.ruling_reason}\npaid out: ${d.settled}` : "");
+}
+
+async function refreshVault() {
+  try {
+    const b = await readClient.readContract({ address: ADDR, functionName: "get_contract_balance", args: [] });
+    $("vHeld").textContent = eth(b) + " GEN";
+  } catch {}
+  try {
+    const c = await readClient.readContract({ address: ADDR, functionName: "get_dispute_count", args: [] });
+    $("vCount").textContent = String(c);
+  } catch {}
 }
 
 $("loadBtn").addEventListener("click", async () => {
-  const id = $("disputeId").value || 1;
+  const id = $("dId").value || 1;
   try {
     msg($("readMsg"), "Reading from chain…", "info");
     const d = await readClient.readContract({ address: ADDR, functionName: "get_dispute", args: [BigInt(id)] });
     render(d);
     msg($("readMsg"), "Loaded.", "ok");
-  } catch (e) {
-    msg($("readMsg"), "Read failed: " + (e.message || e).toString().slice(0, 160), "err");
-  }
+    await refreshVault();
+  } catch (e) { msg($("readMsg"), "Read failed: " + (e.message || e).toString().slice(0, 160), "err"); }
 });
 
 $("countBtn").addEventListener("click", async () => {
   try {
-    const n = await readClient.readContract({ address: ADDR, functionName: "get_dispute_count", args: [] });
-    msg($("readMsg"), `Total disputes on-chain: ${n}`, "ok");
-  } catch (e) {
-    msg($("readMsg"), "Failed: " + (e.message || e).toString().slice(0, 160), "err");
-  }
+    const c = await readClient.readContract({ address: ADDR, functionName: "get_dispute_count", args: [] });
+    msg($("readMsg"), "Total disputes: " + c, "ok");
+    await refreshVault();
+  } catch (e) { msg($("readMsg"), "Failed: " + e.message, "err"); }
 });
 
 $("connectBtn").addEventListener("click", async () => {
-  if (!window.ethereum) return msg($("readMsg"), "No wallet found — install MetaMask to send transactions.", "err");
+  if (!window.ethereum) return msg($("readMsg"), "No wallet detected — install MetaMask.", "err");
   try {
-    const accts = await window.ethereum.request({ method: "eth_requestAccounts" });
-    account = accts[0];
-    // Switch to GenLayer Bradbury (chainId 4221 / 0x107d)
-    try {
-      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x107d" }] });
-    } catch (_) {
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [{
-          chainId: "0x107d",
-          chainName: "GenLayer Bradbury Testnet",
-          nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
-          rpcUrls: ["https://rpc-bradbury.genlayer.com"],
-          blockExplorerUrls: ["https://explorer-bradbury.genlayer.com"],
-        }],
-      });
+    const a = await window.ethereum.request({ method: "eth_requestAccounts" });
+    try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x107d" }] }); }
+    catch {
+      await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
+        chainId: "0x107d", chainName: "GenLayer Bradbury Testnet",
+        nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
+        rpcUrls: ["https://rpc-bradbury.genlayer.com"],
+        blockExplorerUrls: ["https://explorer-bradbury.genlayer.com"],
+      }]});
     }
     writeClient = createClient({ chain: testnetBradbury, account: window.ethereum });
-    $("netLabel").textContent = account.slice(0, 6) + "…" + account.slice(-4);
-    $("netDot").classList.add("live");
+    $("netLabel").textContent = short(a[0]);
+    $("netDot").classList.add("on");
     $("connectBtn").textContent = "Connected";
-    msg($("readMsg"), "Wallet connected. You can now send transactions.", "ok");
-  } catch (e) {
-    msg($("readMsg"), "Connect failed: " + e.message, "err");
-  }
+    msg($("readMsg"), "Wallet connected.", "ok");
+  } catch (e) { msg($("readMsg"), "Connect failed: " + e.message, "err"); }
 });
 
-async function write(fn, args, el, label) {
-  if (!writeClient) { msg(el, "Connect your wallet first.", "err"); return; }
+async function write(fn, args, el, label, value = 0n) {
+  if (!writeClient) return msg(el, "Connect your wallet first.", "err");
   try {
-    msg(el, `${label}: submitting…`, "info");
-    const hash = await writeClient.writeContract({ address: ADDR, functionName: fn, args });
+    msg(el, `${label} → submitting…`, "info");
+    const hash = await writeClient.writeContract({ address: ADDR, functionName: fn, args, value });
     msg(el, `${label} sent: ${hash}`, "ok");
-  } catch (e) {
-    msg(el, `${label} failed: ` + (e.message || e).toString().slice(0, 200), "err");
-  }
+    setTimeout(() => { $("loadBtn").click(); refreshVault(); }, 15000);
+  } catch (e) { msg(el, `${label} failed: ` + (e.message || e).toString().slice(0, 200), "err"); }
 }
 
 $("createBtn").addEventListener("click", () => {
-  const s = $("seller").value.trim(), a = $("amount").value, d = $("desc").value.trim();
-  if (!s || !a || !d) return msg($("createMsg"), "Fill in seller, amount and description.", "err");
-  write("create_dispute", [s, BigInt(a), d], $("createMsg"), "create_dispute");
+  const s = $("seller").value.trim(), g = $("escrow").value, d = $("desc").value.trim();
+  if (!s || !g || !d) return msg($("createMsg"), "Fill in seller, escrow amount and description.", "err");
+  const wei = BigInt(Math.round(parseFloat(g) * 1e6)) * 1000000000000n;  // GEN -> wei
+  write("create_dispute", [s, d], $("createMsg"), `create_dispute (escrowing ${g} GEN)`, wei);
 });
+
+$("acceptBtn").addEventListener("click", () =>
+  write("accept_dispute", [BigInt($("aId").value || 1)], $("actMsg"), "accept_dispute (seller opt-in)"));
+
+$("refundBtn").addEventListener("click", () =>
+  write("refund_if_unaccepted", [BigInt($("aId").value || 1)], $("actMsg"), "refund_if_unaccepted"));
 
 $("evBtn").addEventListener("click", () => {
-  const i = $("evId").value, u = $("evUrl").value.trim(), d = $("evDesc").value.trim();
-  if (!i || !u || !d) return msg($("evMsg"), "Fill in ID, URL and description.", "err");
-  write("submit_evidence", [BigInt(i), u, d], $("evMsg"), "submit_evidence");
+  const u = $("evUrl").value.trim(), d = $("evDesc").value.trim();
+  if (!u || !d) return msg($("actMsg"), "Fill in evidence URL and description.", "err");
+  write("submit_evidence", [BigInt($("aId").value || 1), u, d], $("actMsg"), "submit_evidence");
 });
 
-$("ruleBtn").addEventListener("click", () =>
-  write("request_ruling", [BigInt($("ruleId").value || 1)], $("ruleMsg"), "request_ruling (LLM consensus)"));
+$("judgeBtn").addEventListener("click", () =>
+  write("request_ruling", [BigInt($("aId").value || 1)], $("actMsg"), "request_ruling (LLM reads evidence on-chain)"));
 
 $("settleBtn").addEventListener("click", () =>
-  write("settle", [BigInt($("ruleId").value || 1)], $("ruleMsg"), "settle"));
+  write("settle", [BigInt($("aId").value || 1)], $("actMsg"), "settle (pays out the escrow)"));
 
-// Load dispute #1 on page open (read-only, no wallet needed)
+// wire + initial read
+$("footLinks").innerHTML =
+  `contract <a href="${EXPLORER}" target="_blank" rel="noopener">${ADDR}</a> · ` +
+  `<a href="${REPO}" target="_blank" rel="noopener">source</a> · escrow held by the contract, payouts enforced on-chain<br />`;
 $("loadBtn").click();
+refreshVault();
 </script>
 </body>
 </html>

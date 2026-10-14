@@ -1,31 +1,43 @@
-# DealGuard — Agentic Commerce Dispute Arbitration
+# DealGuard — Escrowed Dispute Arbitration for Agentic Commerce
 
-> An Intelligent Contract on GenLayer that resolves disputes between AI agents
-> (or humans) using LLM consensus: it reads real evidence URLs on-chain, weighs
-> both sides, and rules who gets the escrowed funds.
+> **Funds are really escrowed by the contract and really paid out to the winner.**
+> The buyer escrows GEN on creation (payable), the named seller opts in, both sides file
+> evidence URLs, and an LLM jury on GenLayer reads those pages **on-chain** to rule how the
+> escrow is released.
 
 **Category:** Dispute Resolution · Agentic Commerce
 
 ---
 
-## Why this project
+## What changed after review (v2)
 
-GenLayer's thesis is the **adjudication layer for agentic commerce** — the moment
-an agent-to-agent transaction becomes ambiguous, someone needs machine-speed
-judgment. DealGuard is exactly that primitive:
+The first version was rejected with a fair criticism: the contract did not escrow or release
+GEN — the amount was unbacked metadata and settlement only flipped a state label.
+v2 addresses every point:
 
-- Two parties (buyer & seller — either could be an AI agent) escrow a deal.
-- If they disagree, each side submits **evidence URLs** (receipts, logs, chat
-  transcripts, delivery records…).
-- The contract **fetches every evidence page on-chain** (`gl.nondet.web.get`)
-  and asks an **LLM jury** (`gl.nondet.exec_prompt`) to weigh the evidence and
-  rule who receives the funds.
-- The verdict is reached through GenLayer's **validated consensus**
-  (`gl.vm.run_nondet_unsafe`), not a single oracle.
+| Reviewer requirement | How v2 implements it |
+|---|---|
+| **Funded custody** | `create_dispute` is `@gl.public.write.payable`; the escrowed amount is `gl.message.value` — the GEN actually sent. The contract **holds** it (verified on-chain: contract balance went 0 → 0.5 GEN). |
+| **Seller acceptance** | `accept_dispute()` — only the named seller can opt in; until then `refund_if_unaccepted()` lets the buyer reclaim the escrow. |
+| **Evidence requirements** | `submit_evidence()` is gated to the active parties and requires a URL **and** a description; `request_ruling()` refuses to run with **zero** evidence on file. |
+| **Enforceable payouts** | `settle()` computes the shares and calls `emit_transfer` on the winner's address, which the runtime debits from the contract balance — the escrow is released as real GEN, not a label. |
 
-This is the core "subjective resolution" use case GenLayer was built for —
-no ordinary smart contract can read a PDF receipt and decide who is telling the
-truth. An Intelligent Contract can.
+---
+
+## Lifecycle
+
+```
+OPEN(payable, funds locked) → seller accepts → EVIDENCE → RULED → SETTLED (GEN paid out)
+                    ↘ seller never accepts → buyer refunds
+```
+
+| State | Meaning |
+|---|---|
+| `0 AWAITING SELLER` | escrow funded, waiting for the seller to opt in |
+| `1 ACTIVE` | seller accepted, both sides may file evidence |
+| `2 RULED` | LLM jury decided (winner / split) |
+| `3 SETTLED` | escrow paid out via `emit_transfer` |
+| `4 CANCELLED` | buyer refunded because the seller never accepted |
 
 ---
 
@@ -33,144 +45,112 @@ truth. An Intelligent Contract can.
 
 | Method | Type | Description |
 |---|---|---|
-| `create_dispute(seller, amount, description)` | write | Buyer opens a dispute, escrowing `amount` GEN |
-| `submit_evidence(dispute_id, url, description)` | write | Either party attaches an evidence URL |
-| `request_ruling(dispute_id)` | write | LLM jury reads evidence pages & issues verdict |
-| `settle(dispute_id)` | write | Finalize a ruled dispute (release escrow) |
-| `get_dispute(dispute_id)` | view | Full dispute state |
+| `create_dispute(seller, description)` | **payable** write | Buyer escrows GEN into the contract |
+| `accept_dispute(id)` | write | Named seller opts in (required before evidence) |
+| `refund_if_unaccepted(id)` | write | Buyer reclaims escrow if the seller never accepts |
+| `submit_evidence(id, url, description)` | write | Either party files evidence (active disputes only) |
+| `judge` → `request_ruling(id)` | write | Fetches evidence on-chain, LLM jury rules how to release |
+| `settle(id)` | write | **Pays out** the escrow to winner (or splits) |
+| `get_dispute(id)` | view | Full state incl. `escrow_held_now` (live contract balance) |
+| `get_contract_balance()` | view | GEN currently under custody |
 | `get_dispute_count()` | view | Total disputes |
 
-**Lifecycle:** `CREATED → EVIDENCE → RULED → SETTLED`
-
-### How the AI ruling works
+### The payout path
 
 ```python
-def leader_fn():
-    # 1. Fetch every evidence URL on-chain
-    # 2. Ask the LLM to weigh both sides
-    return gl.nondet.exec_prompt(prompt, response_format='json')
+@gl.evm.contract_interface
+class _Payee:
+    class View: pass
+    class Write: pass
 
-def validator_fn(leaders_res):
-    # 3. Validators run the same logic and compare verdicts
-    return my_result["winner"] == leaders_res.calldata["winner"]
+def _pay(self, to: Address, amount: u256):
+    if amount <= u256(0):
+        return
+    _Payee(to).emit_transfer(value=amount)      # external message → real GEN out
 
-result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
+# settle():
+buyer_share / seller_share computed from winner + split_percent,
+d.escrowed = 0 ; d.settled = True ; d.state = SETTLED
+self._pay(d.buyer, buyer_share)
+self._pay(d.seller, seller_share)
 ```
 
-The jury returns `{"winner": "buyer"|"seller"|"split", "split_percent", "reason"}`.
+`settle()` emits a message the network executes on finalization. The emitted message is
+visible on-chain:
+
+```json
+{ "recipient": "0x6045843b…8d95", "value": "500000000000000000", "data": "0x" }
+```
+
+### The ruling path
+
+`request_ruling()` snapshots the dispute, fetches **every** evidence URL with
+`gl.nondet.web.get`, and asks the jury (`gl.nondet.exec_prompt`) for
+`{winner, split_percent, reason, confidence}`. Validators re-run the same reasoning via
+`gl.vm.run_nondet_unsafe` and must agree on the winner before state is written.
+A party that files no evidence is judged on the record — it cannot win on assertion alone.
 
 ---
 
-## Frontend: `web/`
+## Frontend: `index.html`
 
-A Vite + GenLayerJS single page app:
-- connect a wallet (MetaMask / any EIP-1193)
-- open a dispute, attach evidence URLs
-- request the AI ruling and watch the verdict
-
-```bash
-cd web
-npm install
-# set CONTRACT_ADDRESS in app.js to your deployed address
-npm run dev
-```
+Single-file, build-free (loads `genlayer-js` from esm.sh), GitHub Pages ready:
+- live **escrow vault** readout (GEN held by the contract, dispute count)
+- read any dispute with **no wallet**; connect a wallet to act
+- escrow & open a dispute (sends GEN with the call), seller accept, buyer refund,
+  file evidence, request the ruling, settle the payout
 
 ---
 
-## Local tests (no network needed)
+## Local tests (10 passing)
 
 ```bash
 pip install genlayer-test pytest
 pytest tests/direct/ -v
 ```
 
-Direct mode runs the contract in-memory with mocked web fetches and LLM
-responses. Tests cover: creating disputes, party-only evidence access,
-the full ruling flow, and double-ruling protection.
+Covers: funding required to create, escrow recorded as custody, buyer≠seller, seller-only
+acceptance, evidence blocked before acceptance, ruling blocked with no evidence, buyer refund
+path, full flow ending in payout, split rulings, and no double-settle.
 
 ---
 
-## Deployment status
-
-| Network | Contract address | Tx | Status |
-|---|---|---|---|
-| **Bradbury testnet** | [`0x9adf2dcc59401cb7122b25cbd5741931B2D20039`](https://explorer-bradbury.genlayer.com/address/0x9adf2dcc59401cb7122b25cbd5741931B2D20039) | `0x6c356dcbc3d35a6922312cd97b6c85af20e11f3d4e27e97ce032472e1b19c270` | **live** · ACCEPTED · AGREE (5 validators) |
-
-### Verified end-to-end on Bradbury
-
-Full lifecycle executed against the deployed contract:
-
-| Step | Tx | Result |
-|---|---|---|
-| `create_dispute(seller, 100 GEN, …)` | `0xb507a0f7…` → fixed → `create` | dispute #1 created |
-| `submit_evidence(1, "https://example.com/", …)` | — | stored, state → `EVIDENCE` |
-| `request_ruling(1)` | `0x43d6d6b5fd28c5428660ac4a5c05e23d7726141d90217d65357bdae64046d142` | **ACCEPTED** · `FINISHED_WITH_RETURN` |
-| `settle(1)` | `0xce5e1806a381ffd3dfca043197c77b5b8be985c412acdccc65bce75ac3dfe2fc` | state → `SETTLED` |
-
-**Real LLM verdict returned on-chain** (`winner = "buyer"`):
-
-> "The buyer's evidence URL only displays a generic Example Domain page and does
-> not show the agreed schema, the delivered dataset, or any comparison between
-> them. The seller provided no evidence to establish compliance with the
-> specification. Because the seller cannot substantiate that the dataset matches
-> the agreed schema, the buyer has the better-supported claim and should receive
-> the escrowed funds."
-
-This proves the contract **fetched the evidence URL on-chain**, reasoned about it,
-and reached validator consensus.
-
-### Deploy it yourself
+## Deploy
 
 ```bash
-# 0. install the CLI (verified working)
-npm install -g genlayer            # v0.39.2
-
-# 1. import the deployer account
-genlayer account import --name dealguard \
-  --private-key <YOUR_PRIVATE_KEY> --password '<KEYSTORE_PASSWORD>'
-
-# 2. point at Bradbury
-genlayer network set testnet-bradbury
-
-# 3. get testnet GEN from the faucet
-#    https://testnet-faucet.genlayer.foundation
-#    (GitHub account >3 months old with ≥1 public repo + 0.01 ETH on mainnet)
-
-# 4. deploy (CLI prompts for the keystore password)
+npm install -g genlayer
+genlayer network set testnet-bradbury        # chain 4221, GEN
 genlayer deploy --contract contracts/deal_guard.py
-
-# 5. verify
-genlayer call <CONTRACT_ADDRESS> get_dispute_count
-#    explorer: https://explorer-bradbury.genlayer.com/address/<CONTRACT_ADDRESS>
+genlayer call <CONTRACT> get_contract_balance
 ```
 
-> **Contract header gotcha (learned the hard way):** the first line of the contract
-> must be the runner comment `# { "Depends": "py-genlayer:<hash>" }`. Special ids
-> like `test` / `latest` are **rejected outside debug mode** (`invalid runner id`),
-> so real deployments need a concrete hash:
-> `# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }`
-
-The contract address is already wired into `web/app.js` (`CONTRACT_ADDRESS`).
-
-
+> **Header rule:** line 1 must be the runner directive
+> `# { "Depends": "py-genlayer:<hash>" }`. `test`/`latest` are rejected outside debug mode.
 
 ---
 
-## Project layout
+## Verified end-to-end on Bradbury
+
+| Step | Result |
+|---|---|
+| deploy v2 | ACCEPTED · FINISHED_WITH_RETURN |
+| `create_dispute` payable (0.5 GEN) | contract balance **0 → 0.5 GEN** (real custody) |
+| `accept_dispute` (seller) | state → ACTIVE |
+| `submit_evidence` (both sides) | 2 items on file |
+| `request_ruling` | ACCEPTED · LLM ruled `winner = buyer` |
+| `settle` | ACCEPTED · payout message emitted to the buyer |
+| final state | `SETTLED`, `settled = true`, `escrowed = 0` |
+
+Layout:
 
 ```
 dealguard/
-├── contracts/
-│   └── deal_guard.py          # the Intelligent Contract
-├── tests/direct/
-│   └── test_deal_guard.py     # in-memory tests (mocked web + LLM)
-├── web/                       # GenLayerJS frontend
-│   ├── index.html
-│   ├── app.js
-│   └── package.json
-├── genlayer.config.yaml       # network config (Bradbury default)
+├── contracts/deal_guard.py           the Intelligent Contract (v2, escrowed)
+├── tests/direct/test_deal_guard.py   10 direct-mode tests
+├── index.html                        build-free frontend (GitHub Pages ready)
+├── web/                              optional Vite frontend
+├── genlayer.config.yaml
 └── README.md
 ```
 
-Built with [GenLayer](https://docs.genlayer.com) — Intelligent Contracts that
-can read the web and reason in natural language.
+Built on [GenLayer](https://docs.genlayer.com) Intelligent Contracts.
