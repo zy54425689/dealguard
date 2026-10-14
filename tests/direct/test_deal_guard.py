@@ -1,38 +1,28 @@
 # -*- coding: utf-8 -*-
-"""DealGuard direct-mode tests (run: pytest tests/direct/ -v)"""
+"""DealGuard v2 direct-mode tests — real escrow custody and payouts.
+
+Run: pytest tests/direct/ -v
+"""
 import json
 
-def _deploy(direct_deploy):
-    """Deploy for local direct-mode tests.
 
-    The contract header uses "py-genlayer:test" (the official form for on-chain
-    deployment, see `genlayer new` template). Direct mode resolves dependencies
-    from a local cache, so we swap in the concrete SDK hash that ships with
-    genlayer-test before deploying.
-    """
+def _deploy(direct_deploy):
     import pathlib
     import tempfile
 
     src = pathlib.Path(__file__).resolve().parents[2] / "contracts" / "deal_guard.py"
     code = src.read_text(encoding="utf-8")
-    code = code.replace(
-        '"py-genlayer:test"',
-        '"py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6"',
-        1,
-    )
     tmp = pathlib.Path(tempfile.gettempdir()) / "deal_guard_local.py"
     tmp.write_text(code, encoding="utf-8")
     return direct_deploy(str(tmp))
 
 
 def _addr(v):
-    """Wrap raw bytes into a genlayer Address (available at test runtime)."""
     from genlayer import Address
     return Address(v)
 
 
 def _hex(v) -> str:
-    """Normalize an address-ish value to a plain lowercase hex string."""
     if isinstance(v, str):
         return v.lower().replace("0x", "")
     for attr in ("as_bytes", "_as_bytes"):
@@ -44,92 +34,179 @@ def _hex(v) -> str:
     return bytes(v).hex()
 
 
-def test_create_dispute(direct_vm, direct_deploy, direct_alice, direct_bob):
+def _funded_dispute(direct_vm, contract, buyer, seller, amount=1000):
+    """Helper: buyer escrows `amount` wei and opens a dispute."""
+    direct_vm.sender = buyer
+    direct_vm.value = amount
+    d_id = contract.create_dispute(_addr(seller), "Agent B was paid but never delivered the dataset")
+    direct_vm.value = 0
+    return d_id
+
+
+# ---------------------------------------------------------------- escrow ----
+
+def test_create_requires_funding(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = _deploy(direct_deploy)
     direct_vm.sender = direct_alice
-
-    d_id = contract.create_dispute(_addr(direct_bob), 100, "Agent B failed to deliver the dataset")
-    assert int(d_id) == 1
-
-    info = contract.get_dispute(d_id)
-    assert _hex(info["buyer"]) == direct_alice.hex()
-    assert _hex(info["seller"]) == direct_bob.hex()
-    assert int(info["amount"]) == 100
-    assert int(info["state"]) == 0
-    assert info["winner"] == ""
-    assert int(contract.get_dispute_count()) == 1
+    direct_vm.value = 0
+    with direct_vm.expect_revert("Escrow must be funded"):
+        contract.create_dispute(_addr(direct_bob), "unfunded dispute")
 
 
-def test_create_dispute_requires_amount(direct_vm, direct_deploy, direct_alice, direct_bob):
+def test_escrow_is_custody_not_metadata(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    direct_vm.deal(direct_alice, 10**18)
+
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob, amount=5000)
+    d = contract.get_dispute(d_id)
+
+    # the recorded amount is exactly what was sent with the call
+    assert int(d["escrowed"]) == 5000
+    assert int(d["state"]) == 0                 # awaiting seller acceptance
+    assert d["seller_accepted"] is False
+    assert _hex(d["buyer"]) == direct_alice.hex()
+
+
+def test_buyer_and_seller_must_differ(direct_vm, direct_deploy, direct_alice):
     contract = _deploy(direct_deploy)
     direct_vm.sender = direct_alice
-    with direct_vm.expect_revert("Amount must be positive"):
-        contract.create_dispute(_addr(direct_bob), 0, "bad dispute")
+    direct_vm.value = 1000
+    with direct_vm.expect_revert("Buyer and seller must differ"):
+        contract.create_dispute(_addr(direct_alice), "self dispute")
+    direct_vm.value = 0
 
 
-def test_submit_evidence_only_parties(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
+# ------------------------------------------------- seller acceptance gate ----
+
+def test_only_seller_can_accept(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
     contract = _deploy(direct_deploy)
-    direct_vm.sender = direct_alice
-    d_id = contract.create_dispute(_addr(direct_bob), 100, "delivery dispute")
-
-    direct_vm.sender = direct_alice
-    contract.submit_evidence(d_id, "https://example.com/invoice", "invoice from buyer")
-
-    direct_vm.sender = direct_bob
-    contract.submit_evidence(d_id, "https://example.com/delivery-log", "delivery log from seller")
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob)
 
     direct_vm.sender = direct_charlie
-    with direct_vm.expect_revert("Only the buyer or seller may submit evidence"):
-        contract.submit_evidence(d_id, "https://example.com/hack", "not a party")
+    with direct_vm.expect_revert("Only the named seller can accept"):
+        contract.accept_dispute(d_id)
 
-    info = contract.get_dispute(d_id)
-    assert len(info["buyer_evidence"]) == 1
-    assert len(info["seller_evidence"]) == 1
-    assert int(info["state"]) == 1
-
-
-def test_full_ruling_flow(direct_vm, direct_deploy, direct_alice, direct_bob):
-    contract = _deploy(direct_deploy)
-    direct_vm.sender = direct_alice
-    d_id = contract.create_dispute(
-        _addr(direct_bob), 500, "Freelance agent billed twice for the same task")
-
-    direct_vm.sender = direct_alice
-    contract.submit_evidence(d_id, "https://example.com/payment-1", "first payment receipt")
     direct_vm.sender = direct_bob
-    contract.submit_evidence(d_id, "https://example.com/refund", "refund confirmation")
+    contract.accept_dispute(d_id)
+    d = contract.get_dispute(d_id)
+    assert d["seller_accepted"] is True
+    assert int(d["state"]) == 1
 
-    # Mock the web fetches (regex on URL) and the LLM jury verdict.
-    direct_vm.mock_web(
-        r".*example\.com/payment-1.*",
-        {"status": 200, "body": "<html>Payment of 500 GEN received from buyer</html>"},
-    )
-    direct_vm.mock_web(
-        r".*example\.com/refund.*",
-        {"status": 200, "body": "<html>Refund of 500 GEN sent back to buyer</html>"},
-    )
-    direct_vm.mock_llm(
-        r".*",
-        {"winner": "buyer", "split_percent": 100,
-         "reason": "The payment receipt shows the buyer already paid; the refund confirms the seller returned it, so the escrow should go back to the buyer."},
-    )
+
+def test_evidence_blocked_until_accepted(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("Dispute is not active for evidence"):
+        contract.submit_evidence(d_id, "https://example.com/x", "too early")
+
+
+def test_buyer_refund_when_seller_never_accepts(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob, amount=2000)
+
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("Only the buyer can refund"):
+        contract.refund_if_unaccepted(d_id)
+
+    direct_vm.sender = direct_alice
+    contract.refund_if_unaccepted(d_id)
+    d = contract.get_dispute(d_id)
+    assert int(d["state"]) == 4        # CANCELLED
+    assert int(d["escrowed"]) == 0     # escrow released
+    assert d["settled"] is True
+
+
+# ------------------------------------------------------ evidence + ruling ----
+
+def test_ruling_requires_evidence_on_file(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob)
+    direct_vm.sender = direct_bob
+    contract.accept_dispute(d_id)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("No evidence on file"):
+        contract.request_ruling(d_id)
+
+
+def test_full_flow_pays_the_winner(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob, amount=7000)
+
+    direct_vm.sender = direct_bob
+    contract.accept_dispute(d_id)
+
+    direct_vm.sender = direct_alice
+    contract.submit_evidence(d_id, "https://example.com/payment", "payment receipt")
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(d_id, "https://example.com/delivery", "delivery log")
+
+    direct_vm.mock_web(r".*example\.com/payment.*",
+                       {"status": 200, "body": "<html>Payment of 7000 wei received</html>"})
+    direct_vm.mock_web(r".*example\.com/delivery.*",
+                       {"status": 200, "body": "<html>No matching delivery record found</html>"})
+    direct_vm.mock_llm(r".*", {
+        "winner": "buyer",
+        "split_percent": 100,
+        "reason": "The payment receipt confirms the buyer paid while the seller produced no delivery record.",
+        "confidence": "high",
+    })
 
     contract.request_ruling(d_id)
+    d = contract.get_dispute(d_id)
+    assert int(d["state"]) == 2
+    assert d["winner"] == "buyer"
+    assert int(d["split_percent"]) == 100
+    assert "payment" in d["ruling_reason"].lower()
 
-    info = contract.get_dispute(d_id)
-    assert int(info["state"]) == 2
-    assert info["winner"] == "buyer"
-    assert "payment" in info["ruling_reason"].lower()
+    contract.settle(d_id)
+    d = contract.get_dispute(d_id)
+    assert int(d["state"]) == 3
+    assert d["settled"] is True
+    assert int(d["escrowed"]) == 0        # escrow released, not left as metadata
 
+
+def test_split_ruling_records_share(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob, amount=1000)
+    direct_vm.sender = direct_bob
+    contract.accept_dispute(d_id)
+    direct_vm.sender = direct_alice
+    contract.submit_evidence(d_id, "https://example.com/a", "buyer side")
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(d_id, "https://example.com/b", "seller side")
+
+    direct_vm.mock_web(r".*", {"status": 200, "body": "<html>partial evidence</html>"})
+    direct_vm.mock_llm(r".*", {"winner": "split", "split_percent": 40,
+                               "reason": "Both parties are partly responsible.", "confidence": "medium"})
+    contract.request_ruling(d_id)
+
+    d = contract.get_dispute(d_id)
+    assert d["winner"] == "split"
+    assert int(d["split_percent"]) == 40
     contract.settle(d_id)
     assert int(contract.get_dispute(d_id)["state"]) == 3
 
 
-def test_cannot_rule_twice(direct_vm, direct_deploy, direct_alice, direct_bob):
+def test_no_double_settle_or_early_settle(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = _deploy(direct_deploy)
+    d_id = _funded_dispute(direct_vm, contract, direct_alice, direct_bob, amount=500)
+
+    with direct_vm.expect_revert("Dispute is not ruled yet"):
+        contract.settle(d_id)
+
+    direct_vm.sender = direct_bob
+    contract.accept_dispute(d_id)
     direct_vm.sender = direct_alice
-    d_id = contract.create_dispute(_addr(direct_bob), 10, "small dispute")
-    direct_vm.mock_llm(r".*", {"winner": "split", "split_percent": 50, "reason": "both partly at fault"})
+    contract.submit_evidence(d_id, "https://example.com/e", "evidence")
+    direct_vm.mock_web(r".*", {"status": 200, "body": "<html>ok</html>"})
+    direct_vm.mock_llm(r".*", {"winner": "seller", "split_percent": 0,
+                               "reason": "Seller's evidence prevails.", "confidence": "high"})
     contract.request_ruling(d_id)
-    with direct_vm.expect_revert("Ruling already issued"):
-        contract.request_ruling(d_id)
+    contract.settle(d_id)
+
+    # already settled -> the ruling gate rejects further payouts
+    with direct_vm.expect_revert("Dispute is not ruled yet"):
+        contract.settle(d_id)
